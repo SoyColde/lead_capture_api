@@ -30,13 +30,24 @@ def get_lead_stats(db: Session, status: str = None, days: int = None):
 def get_lead_by_email(email: str, db: Session):
     """This function retrieves a lead based on the provided email."""
     lead = db.query(Lead).filter(func.lower(Lead.email) == func.lower(email)).first()
-    if lead:
-        logger.info(f"Lead retrieved successfully with email: {lead.email}")
-        return lead
-    else:
+    if lead is None:
         logger.warning(f"Lead not found with email: {email}")
-        raise HTTPException(status_code=404, detail={
-            "error": "Lead not found", "details": f"No lead found with email: {email}"})
+        return {
+            "found": False,
+            "message": "Lead does not exist with that email."
+        }
+    logger.info("Lead retrieved successfully")
+    return {
+        "found": True,
+        "lead": {
+            "id": lead.id,
+            "name": lead.name,
+            "email": lead.email,
+            "phone": lead.phone,
+            "temperature": lead.temperature,
+            "notes": lead.notes
+        }
+    }
 
 def update_lead_temperature(id: int, new_status: New_temperature, db: Session):
     """This function updates the temperature of a lead based on the provided ID."""
@@ -44,7 +55,7 @@ def update_lead_temperature(id: int, new_status: New_temperature, db: Session):
 
     try:
         if lead:
-            lead.temperature = new_status.temperature
+            lead.temperature = new_status
             db.commit()
             logger.info(f"Lead temperature updated successfully for ID: {lead.id} to {lead.temperature}")
             return {"id": lead.id, "temperature": lead.temperature}
