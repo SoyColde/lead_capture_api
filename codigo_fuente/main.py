@@ -4,8 +4,8 @@ from fastapi import FastAPI, HTTPException, Depends, Query
 from codigo_fuente.database import engine, Base
 from codigo_fuente.dependencies import get_db, verify_api_key
 from codigo_fuente.models import Lead
-from codigo_fuente.schemas import Valid_Lead
-from codigo_fuente.llm_service import classify_lead
+from codigo_fuente.schemas import Valid_Lead, Valid_message
+from codigo_fuente.llm_service import classify_lead, send_to_llm
 import math
 import logging
 import codigo_fuente.logging_config
@@ -161,3 +161,15 @@ def update_lead(id: int, lead: Valid_Lead, db: Session = Depends(get_db), api_ke
             "id": existing_lead.id,
             "temperature": existing_lead.temperature
             }
+
+@app.post("/assistant/ask", status_code=200)
+def ask_assistant(question: Valid_message, api_key: str = Depends(verify_api_key), db: Session = Depends(get_db)):
+    """This endpoint allows users to ask questions to the assistant."""
+    content = None
+    response = send_to_llm(question.message, db)
+    if response.choices:
+        content=response.choices[0].message.content
+    if content is None:
+        raise HTTPException(status_code=502, detail="The LLM returned an empty response")
+    logger.info(f"Assistant question processed successfully: {question.message}")
+    return {"response": response.choices[0].message.content, "message": "Assistant question processed successfully"}

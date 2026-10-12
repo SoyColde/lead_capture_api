@@ -1,8 +1,10 @@
 import os
 from dotenv import load_dotenv
-from google import genai
-from google.genai.errors import ServerError
+from groq import Groq
+import json
 from codigo_fuente.schemas import LeadClassification
+from codigo_fuente.definitions import TOOLS
+from codigo_fuente.tool_registry import execute_tool
 import logging
 
 logger = logging.getLogger(__name__)
@@ -10,16 +12,18 @@ logger = logging.getLogger(__name__)
 load_dotenv() # It loads environment variables from a .env file,
 
 try:
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    model = os.getenv("GROQ_MODEL")
 except Exception as e:
     client = None #Autoset client as none since there was a problem with the API key
+    model = None
 
 def classify_lead(lead):
     # It checks if the client is None, which indicates that the LLM client was not initialized properly. 
     # If the client is None, it raises a RuntimeError with a message indicating that the LLM client is not initialized 
     # Suggests checking the GEMINI_API_KEY.
-    if client is None:
-        raise RuntimeError("LLM client not initialized - check your GEMINI_API_KEY")
+    if client is None or model is None:
+        raise RuntimeError("LLM client not initialized or MODEL not set - check your GROQ_API_KEY and MODEL")
 
     prompt = f"""
     You are a lead classification expert. You will receive information about a lead in JSON format. 
@@ -39,24 +43,102 @@ def classify_lead(lead):
     request: {lead.request}
     notes: {lead.notes}
 
-    Please return the classification and a brief reason for your classification
+    Return only a JSON object with this structure:{
+            "temperature": "cold" or "hot",
+            "reason": "brief explanation"
+    }
+
     """
 
     try:
-        response = client.models.generate_content(
-            model="gemini-3.7-flash",
-            contents=prompt,
-            config={
-                "response_mime_type": "application/json",
-                "response_schema":LeadClassification,
-            },
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role":"user",
+                    "content":prompt
+                }
+            ],
+            response_format={"type":"json_object"}
         )
 
+        result = json.loads(response.choices[0].message.content)
 
-        return response.parsed
+        return LeadClassification.model_validate(result)
     
-    except ServerError as e:
-        raise ServerError(f"Server error occurred unable to use LLM: {e}")
     except Exception as e:
         logger.exception("Unexpected error occurred while classifying lead", extra={"details": str(e)})
         raise ((f"Unexpected error occurred: {e}"))
+
+def send_to_llm(message, db, tools=TOOLS):
+
+    if client is None:
+        raise RuntimeError("LLM client not initialized - check your GEMINI_API_KEY")
+
+    messages = [
+        {
+            "role":"user",
+            "content": message
+        }
+    ]
+
+    try:
+        # first call to llm
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto"
+        )
+        logger.info(f"Message sent to llm successfully: {message}")
+
+        assistant_message = response.choices[0].message
+
+        # Verify if llm requested the function call
+        if assistant_message.tool_calls:
+            logger.info(f"Function calls received from llm: {assistant_message.tool_calls}")
+
+            tool_call = assistant_message.tool_calls[0]
+
+            tool_name = tool_call.function.name
+            arguments = json.loads(tool_call.function.arguments)
+
+            logger .info(f"Executing tool '{tool_name}' with arguments: {arguments}")
+
+            # Execute the tool and get the result
+            result = execute_tool(tool_name, arguments, db)
+
+            logger.info(f"Tool '{tool_name}' executed successfully with result: {result}")
+
+            # Created the new content with the result
+            messages.append(assistant_message)
+
+            messages.append(
+                {
+                    "role":"tool",
+                    "tool_call_id":tool_call.id,
+                    "content":json.dumps(result, default=str)
+                }
+            )
+
+            # Send the result back to llm
+            final_response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto"
+            )
+
+            logger.info("Final response generated succesfully")
+
+            return final_response
+
+        logger.info("No function calls received from Gemini, returning the initial response")
+
+        return response
+    
+    except Exception as e:
+        logger.exception("Unexpected error occurred while sending message to llm", extra={"details": str(e)})
+        raise RuntimeError(f"Unexpected error occurred: {e}")
+
+

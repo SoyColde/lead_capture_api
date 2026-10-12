@@ -13,3 +13,20 @@ class LeadClassification(BaseModel):
     temperature: Literal["cold", "hot"] = Field(..., description="Classification of the lead based on temperature")
     reason: str = Field(..., description="Reason for the classification")
 
+class New_temperature(BaseModel):
+    temperature: Literal["cold", "hot"] = Field(..., description="New temperature for the lead")
+
+class Valid_message(BaseModel):
+    message: str = Field(..., description="Message to be sent to the assistant")
+
+class LeadStatsArgs(BaseModel):
+    status: Literal["cold", "hot"]
+    days: int = Field(gt=0)
+
+class LeadByEmailArgs(BaseModel):
+    email: EmailStr
+
+class UpdateLeadTemperatureArgs(BaseModel):
+    id: int
+    new_status: Literal["cold", "hot"]
+
