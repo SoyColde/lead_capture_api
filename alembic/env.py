@@ -3,7 +3,7 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 from codigo_fuente.database import Base
-from codigo_fuente.models import Lead
+from codigo_fuente.models import Lead, PendingAction
 from dotenv import load_dotenv
 import os
 from alembic import context

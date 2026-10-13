@@ -32,6 +32,15 @@ def execute_tool(tool_name, tool_args, db):
 
     try:
         validated_args = tool["schema"].model_validate(tool_args)
+
+        if tool["requires_confirmation"]:
+            return {
+                "status":"approval required",
+                "tool":tool_name,
+                "arguments":validated_args.model_dump(),
+                "message":"The action requires human approval",
+            }
+        
     except ValidationError as e:
         raise ValueError(f"Invalid arguments for tool '{tool_name}': {e}")
 

@@ -167,9 +167,41 @@ def ask_assistant(question: Valid_message, api_key: str = Depends(verify_api_key
     """This endpoint allows users to ask questions to the assistant."""
     content = None
     response = send_to_llm(question.message, db)
-    if response.choices:
-        content=response.choices[0].message.content
+
+    # Case 1: A tool requires human approval
+    if isinstance(response, dict) and response.get("status") == "approval required":
+
+        logger.info(
+            "Human approval required for tool '%s'.",
+            response["tool"],
+        )
+
+        return {
+            "status": "approval required",
+            "tool": response["tool"],
+            "arguments": response["arguments"],
+            "message": response["message"],
+        }
+
+    # Case 2: The LLM returned a normal response.
+    if not response.choices:
+        raise HTTPException(
+            status_code=502,
+            detail="The LLM returned an empty response",
+        )
+
+    content = response.choices[0].message.content
+
     if content is None:
-        raise HTTPException(status_code=502, detail="The LLM returned an empty response")
-    logger.info(f"Assistant question processed successfully: {question.message}")
-    return {"response": response.choices[0].message.content, "message": "Assistant question processed successfully"}
+        raise HTTPException(
+            status_code=502,
+            detail="The LLM returned an empty response",
+        )
+
+    logger.info("Assistant question processed successfully.")
+
+    return {
+        "status": "completed",
+        "response": content,
+        "message": "Assistant question processed successfully",
+    }

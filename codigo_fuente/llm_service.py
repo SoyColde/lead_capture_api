@@ -77,6 +77,17 @@ def send_to_llm(message, db, tools=TOOLS):
 
     messages = [
         {
+    "role": "system",
+    "content": (
+        "You are a helpful CRM assistant. "
+        "Respond in natural, conversational language. "
+        "When presenting lead information, prefer concise paragraphs "
+        "instead of bullet lists or raw field-by-field output. "
+        "Preserve the accuracy of the information returned by tools. "
+        "Never invent missing lead information."
+    )
+},
+        {
             "role":"user",
             "content": message
         }
@@ -108,7 +119,20 @@ def send_to_llm(message, db, tools=TOOLS):
             # Execute the tool and get the result
             result = execute_tool(tool_name, arguments, db)
 
-            logger.info(f"Tool '{tool_name}' executed successfully with result: {result}")
+            if result.get("status") == "approval required":
+                logger.info(
+                    "Tool '%s' requires human approval; execution blocked.",
+                    tool_name
+                )
+
+                return {
+                    "status":"approval required",
+                    "tool": tool_name,
+                    "arguments":result["arguments"],
+                    "message": "Human approval is required before execution",
+                }
+
+            logger.info("Tool '%s' executed successfully.", tool_name)
 
             # Created the new content with the result
             messages.append(assistant_message)
