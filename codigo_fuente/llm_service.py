@@ -125,12 +125,7 @@ def send_to_llm(message, db, tools=TOOLS):
                     tool_name
                 )
 
-                return {
-                    "status":"approval required",
-                    "tool": tool_name,
-                    "arguments":result["arguments"],
-                    "message": "Human approval is required before execution",
-                }
+                return result
 
             logger.info("Tool '%s' executed successfully.", tool_name)
 

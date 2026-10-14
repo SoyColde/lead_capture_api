@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from fastapi import FastAPI, HTTPException, Depends, Query
 from codigo_fuente.database import engine, Base
 from codigo_fuente.dependencies import get_db, verify_api_key
-from codigo_fuente.models import Lead
+from codigo_fuente.models import Lead, PendingAction
 from codigo_fuente.schemas import Valid_Lead, Valid_message
 from codigo_fuente.llm_service import classify_lead, send_to_llm
 import math
@@ -176,13 +176,9 @@ def ask_assistant(question: Valid_message, api_key: str = Depends(verify_api_key
             response["tool"],
         )
 
-        return {
-            "status": "approval required",
-            "tool": response["tool"],
-            "arguments": response["arguments"],
-            "message": response["message"],
-        }
+        return response
 
+    
     # Case 2: The LLM returned a normal response.
     if not response.choices:
         raise HTTPException(
@@ -205,3 +201,41 @@ def ask_assistant(question: Valid_message, api_key: str = Depends(verify_api_key
         "response": content,
         "message": "Assistant question processed successfully",
     }
+
+@app.get("/pending_actions", status_code=200)
+def get_pending_actions(
+    limit: int = Query(10, ge=1, le=100, description="Number of requests to retrieve per page (1-100)"),
+              pages: int = Query(1, ge=1, description="Page number to retrieve (1-based)"),
+              db: Session = Depends(get_db), api_key: str = Depends(verify_api_key)
+                        ):
+    """
+    Retrieves all the pending actions registered
+    """
+
+    offset = (pages - 1) * limit
+
+    query = db.query(PendingAction).filter(PendingAction.status == "pending")
+
+    total_requests = query.count()
+
+    if total_requests:
+        total_pages = math.ceil(total_requests / limit) 
+    else:
+        total_pages = 0
+        logger.warning("No actions found in the database")
+        raise HTTPException(status_code=200, detail={"requests": "0", "details": "The database is empty"})
+
+    actions = (query
+               .order_by(PendingAction.id.asc())
+               .offset(offset)
+               .limit(limit)
+               .all()
+            )
+
+    logger.info(f"Retrieved {len(actions)} pending actions (Page {pages} of {total_pages})")
+    
+    return {"pages": pages,
+            "limit": limit,
+            "total_requests": total_requests,
+            "total_pages": total_pages,
+            "requests": actions}
