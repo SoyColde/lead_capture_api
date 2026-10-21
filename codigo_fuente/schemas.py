@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, EmailStr
 from typing import Literal
+from enum import Enum
 
 class Valid_Lead(BaseModel):
     name: str = Field(..., description="Nombre del lead")
@@ -25,9 +26,6 @@ class LeadStatsArgs(BaseModel):
 
 class LeadByEmailArgs(BaseModel):
     email: EmailStr
-
-class RequestStatus(BaseModel):
-    new_status: Literal["approve", "reject", "pending", "executed"]
 
 class UpdateLeadTemperatureArgs(BaseModel):
     id: int

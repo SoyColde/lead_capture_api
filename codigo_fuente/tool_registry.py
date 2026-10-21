@@ -22,7 +22,7 @@ TOOL_REGISTRY = {
     }
 }
 
-def execute_tool(tool_name, tool_args, db, requested_by=None):
+def execute_tool(tool_name, tool_args, db, requested_by="ADMIN"):
     """
     Executes a tool from the TOOL_REGISTRY with the provided arguments.
     If requires confirmation, saves the request info

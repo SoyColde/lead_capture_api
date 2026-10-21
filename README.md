@@ -125,6 +125,20 @@ The key is stored through environment variables.
 
 ---
 
+## Safety
+
+### Human-in-the-Loop (HITL)
+
+The `update_lead_temperature` tool requires explicit confirmation (`requires_confirmation=True`) and is never executed automatically by the LLM.
+
+When the LLM requests a temperature change, the application stores it as a `PendingAction` with `pending` status. The lead remains unchanged until an API client explicitly approves or rejects the request. Approved actions are executed; rejected actions are not.
+
+This protection applies specifically to LLM-initiated changes. The `PATCH /leads/{id}` endpoint still allows direct updates through the API without this approval workflow.
+
+Currently, action management relies on API key authentication. Role-based permissions and individual operator identification are not implemented and remain potential future improvements.
+
+---
+
 ## Database & Migrations
 
 The project was migrated from **SQLite to PostgreSQL**.

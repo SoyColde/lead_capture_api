@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Depends, Query
 from codigo_fuente.database import engine, Base
 from codigo_fuente.dependencies import get_db, verify_api_key
 from codigo_fuente.models import Lead, PendingAction
-from codigo_fuente.schemas import Valid_Lead, Valid_message, RequestStatus
+from codigo_fuente.schemas import Valid_Lead, Valid_message
 from codigo_fuente.llm_service import classify_lead, send_to_llm
 from codigo_fuente.tool_registry import TOOL_REGISTRY
 from datetime import datetime, timezone
@@ -12,6 +12,7 @@ import math
 import logging
 import codigo_fuente.logging_config
 from google.genai.errors import ServerError
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,7 @@ def ask_assistant(question: Valid_message, api_key: str = Depends(verify_api_key
 
 @app.get("/actions/{action_status}", status_code=200)
 def get_pending_actions(
-    action_status: str = RequestStatus,
+    action_status: Literal["executed", "rejected", "pending"],
     limit: int = Query(10, ge=1, le=100, description="Number of requests to retrieve per page (1-100)"),
               pages: int = Query(1, ge=1, description="Page number to retrieve (1-based)"),
               db: Session = Depends(get_db), api_key: str = Depends(verify_api_key),
@@ -246,7 +247,7 @@ def get_pending_actions(
 @app.post("/pending_actions/{action_id}/{new_status}")
 def approve_pending_action(
     action_id: int,
-    new_status: str = RequestStatus,
+    new_status: Literal["approve", "reject"],
     db: Session = Depends(get_db),
     api_key: str = Depends(verify_api_key),
 ):
@@ -254,7 +255,7 @@ def approve_pending_action(
     """
     Process pending actions exactly once
     """
-    
+
     try:
     # Lock the action row while processing it
         action = (
@@ -273,10 +274,10 @@ def approve_pending_action(
         # Only process pending actions
         if action.status != "pending":
             raise HTTPException(
-                        status_code = 404,
+                        status_code = 409,
                         detail=(
-                            f"action cannot be processed",
-                            f"its current status is {action.status}."
+                            "Action cannot be processed "
+                            f"Current status is {action.status}."
                         ),
                     )
 
@@ -284,7 +285,6 @@ def approve_pending_action(
             """
             Approve and execute pending actions exactly once
             """
-            action.status = "approved"
 
             # Resolves the tool from the registry
             tool = TOOL_REGISTRY.get(action.tool_name)
@@ -301,9 +301,8 @@ def approve_pending_action(
 
             # Record the approval within the transaction
 
+            action.status = "approved"
             action.approved_by = "api_key_authenticated"
-            action.status = "executed"
-            action.executed_at = datetime.now(timezone.utc)
 
             db.flush()
 
@@ -313,17 +312,13 @@ def approve_pending_action(
                 db=db,
             )
 
+            action.status = "executed"
+            action.executed_at = datetime.now(timezone.utc)
 
-        if new_status == "reject":
+
+        elif new_status == "reject":
             action.status = "rejected"
             result = "Action rejected. The tool was not executed."
-
-        if new_status not in ("approve", "reject"):
-            logger.warning(f"Status: {new_status} sent to pending actions.")
-            raise HTTPException(
-                status_code=404,
-                detail="That status is not allowed"
-                )
 
 
         now = datetime.now(timezone.utc)
