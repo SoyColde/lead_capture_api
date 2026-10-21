@@ -4,8 +4,10 @@ from fastapi import FastAPI, HTTPException, Depends, Query
 from codigo_fuente.database import engine, Base
 from codigo_fuente.dependencies import get_db, verify_api_key
 from codigo_fuente.models import Lead, PendingAction
-from codigo_fuente.schemas import Valid_Lead, Valid_message
+from codigo_fuente.schemas import Valid_Lead, Valid_message, RequestStatus
 from codigo_fuente.llm_service import classify_lead, send_to_llm
+from codigo_fuente.tool_registry import TOOL_REGISTRY
+from datetime import datetime, timezone
 import math
 import logging
 import codigo_fuente.logging_config
@@ -202,19 +204,20 @@ def ask_assistant(question: Valid_message, api_key: str = Depends(verify_api_key
         "message": "Assistant question processed successfully",
     }
 
-@app.get("/pending_actions", status_code=200)
+@app.get("/actions/{action_status}", status_code=200)
 def get_pending_actions(
+    action_status: str = RequestStatus,
     limit: int = Query(10, ge=1, le=100, description="Number of requests to retrieve per page (1-100)"),
               pages: int = Query(1, ge=1, description="Page number to retrieve (1-based)"),
-              db: Session = Depends(get_db), api_key: str = Depends(verify_api_key)
-                        ):
+              db: Session = Depends(get_db), api_key: str = Depends(verify_api_key),
+            ):
     """
     Retrieves all the pending actions registered
     """
 
     offset = (pages - 1) * limit
 
-    query = db.query(PendingAction).filter(PendingAction.status == "pending")
+    query = db.query(PendingAction).filter(PendingAction.status == action_status)
 
     total_requests = query.count()
 
@@ -239,3 +242,113 @@ def get_pending_actions(
             "total_requests": total_requests,
             "total_pages": total_pages,
             "requests": actions}
+
+@app.post("/pending_actions/{action_id}/{new_status}")
+def approve_pending_action(
+    action_id: int,
+    new_status: str = RequestStatus,
+    db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
+
+    """
+    Process pending actions exactly once
+    """
+    
+    try:
+    # Lock the action row while processing it
+        action = (
+                    db.query(PendingAction)
+                    .filter(PendingAction.id == action_id)
+                    .with_for_update()
+                    .first()
+                )
+    
+        if action is None:
+            raise HTTPException(
+                        status_code=404,
+                        detail="Pending action not found",
+                    )
+    
+        # Only process pending actions
+        if action.status != "pending":
+            raise HTTPException(
+                        status_code = 404,
+                        detail=(
+                            f"action cannot be processed",
+                            f"its current status is {action.status}."
+                        ),
+                    )
+
+        if new_status == "approve":
+            """
+            Approve and execute pending actions exactly once
+            """
+            action.status = "approved"
+
+            # Resolves the tool from the registry
+            tool = TOOL_REGISTRY.get(action.tool_name)
+
+            if tool is None or not tool["requires_confirmation"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid or non-approvable tool",
+                )
+
+            # Revalidated the arguments stored in the database
+
+            validated_args = tool["schema"].model_validate(action.arguments)
+
+            # Record the approval within the transaction
+
+            action.approved_by = "api_key_authenticated"
+            action.status = "executed"
+            action.executed_at = datetime.now(timezone.utc)
+
+            db.flush()
+
+            # Execute tool
+            result = tool["function"](
+                **validated_args.model_dump(),
+                db=db,
+            )
+
+
+        if new_status == "reject":
+            action.status = "rejected"
+            result = "Action rejected. The tool was not executed."
+
+        if new_status not in ("approve", "reject"):
+            logger.warning(f"Status: {new_status} sent to pending actions.")
+            raise HTTPException(
+                status_code=404,
+                detail="That status is not allowed"
+                )
+
+
+        now = datetime.now(timezone.utc)
+        action.decided_at = now
+        logger.info(f"Action processed succesfully: {action.status} with the id: {action.id} and {result}")
+
+        db.commit()
+
+        return {
+                "approval_id": action.id,
+                "status": action.status,
+                "result": result,
+            } 
+
+    except HTTPException as e:
+            logger.error(f"Error while processing the request, details {e}")
+            db.rollback()
+            raise
+    except Exception:
+            db.rollback()
+            logger.exception(
+                f"Failed to {new_status} pending action %s",
+                action_id,
+            )
+            raise HTTPException(
+                status_code = 500,
+                detail= f"Failed to {new_status} and execute the action",
+            )

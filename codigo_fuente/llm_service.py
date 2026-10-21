@@ -43,10 +43,11 @@ def classify_lead(lead):
     request: {lead.request}
     notes: {lead.notes}
 
-    Return only a JSON object with this structure:{
+    Return only a JSON object with this structure:
+    {{
             "temperature": "cold" or "hot",
             "reason": "brief explanation"
-    }
+    }}
 
     """
 
@@ -125,7 +126,24 @@ def send_to_llm(message, db, tools=TOOLS):
                     tool_name
                 )
 
-                return result
+                messages.append(assistant_message)
+
+                messages.append(
+                                {
+                                    "role":"tool",
+                                    "tool_call_id":tool_call.id,
+                                    "content":json.dumps(result, default=str)
+                                }
+                            )
+
+                final_response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto"
+                                    )
+
+                return final_response
 
             logger.info("Tool '%s' executed successfully.", tool_name)
 

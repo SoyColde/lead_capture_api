@@ -26,6 +26,9 @@ class LeadStatsArgs(BaseModel):
 class LeadByEmailArgs(BaseModel):
     email: EmailStr
 
+class RequestStatus(BaseModel):
+    new_status: Literal["approve", "reject", "pending", "executed"]
+
 class UpdateLeadTemperatureArgs(BaseModel):
     id: int
     new_status: Literal["cold", "hot"]

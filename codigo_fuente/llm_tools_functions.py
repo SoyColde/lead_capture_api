@@ -56,7 +56,7 @@ def update_lead_temperature(id: int, new_status: New_temperature, db: Session):
     try:
         if lead:
             lead.temperature = new_status
-            db.commit()
+            db.flush()
             logger.info(f"Lead temperature updated successfully for ID: {lead.id} to {lead.temperature}")
             return {"id": lead.id, "temperature": lead.temperature}
         else:
