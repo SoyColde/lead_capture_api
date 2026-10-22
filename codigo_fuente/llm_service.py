@@ -1,4 +1,5 @@
 import os
+from collections import defaultdict
 from dotenv import load_dotenv
 from groq import Groq
 import json
@@ -71,13 +72,44 @@ def classify_lead(lead):
         logger.exception("Unexpected error occurred while classifying lead", extra={"details": str(e)})
         raise ((f"Unexpected error occurred: {e}"))
 
-def send_to_llm(message, db, tools=TOOLS):
+MAX_HISTORY_MESSAGES = 10
+
+conversation_histories = defaultdict(list)
+
+def save_conversation_turn(
+        conversation_id,
+        user_message,
+        assistant_response
+):
+    history = conversation_histories[conversation_id]
+
+    history.extend([
+        {
+            "role":"user",
+            "content":user_message
+        },
+        {
+            "role":"assistant",
+            "content":assistant_response
+        }
+    ])
+
+    conversation_histories[conversation_id] = (
+        history[-MAX_HISTORY_MESSAGES:]
+    )
+
+
+def send_to_llm(
+        message, 
+        db, 
+        tools=TOOLS,
+        conversation_id = "default"
+        ):
 
     if client is None:
         raise RuntimeError("LLM client not initialized - check your GEMINI_API_KEY")
 
-    messages = [
-        {
+    system_message = {
     "role": "system",
     "content": (
         "You are a helpful CRM assistant. "
@@ -87,10 +119,15 @@ def send_to_llm(message, db, tools=TOOLS):
         "Preserve the accuracy of the information returned by tools. "
         "Never invent missing lead information."
     )
-},
+}
+    history = conversation_histories[conversation_id]
+
+    messages = [
+        system_message,
+        *history[-MAX_HISTORY_MESSAGES:],
         {
             "role":"user",
-            "content": message
+            "content":message
         }
     ]
 
@@ -160,6 +197,16 @@ def send_to_llm(message, db, tools=TOOLS):
                     "Natural-language response generated for pending approval."
                 )
 
+                assistant_text = (
+                    final_response.choices[0].message.content or ""
+                )
+
+                save_conversation_turn(
+                    conversation_id,
+                    message,
+                    assistant_text
+                )
+
                 return final_response
 
             logger.info("Tool '%s' executed successfully.", tool_name)
@@ -185,9 +232,19 @@ def send_to_llm(message, db, tools=TOOLS):
 
             logger.info("Final response generated succesfully")
 
+            assistant_text = (
+                                final_response.choices[0].message.content or ""
+                            )
+            
+            save_conversation_turn(
+                                conversation_id,
+                                message,
+                                assistant_text
+                            )
+
             return final_response
 
-        logger.info("No function calls received from Gemini, returning the initial response")
+        logger.info("No function calls received from llm, returning the initial response")
 
         return response
     
