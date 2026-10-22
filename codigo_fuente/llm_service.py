@@ -128,6 +128,19 @@ def send_to_llm(message, db, tools=TOOLS):
 
                 messages.append(assistant_message)
 
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "IMPORTANT: The requested action has NOT been "
+                        "executed. It requires human approval. "
+                        "The pending action has been registered, but "
+                        "the lead has not been modified. "
+                        "Respond naturally in the user's language. "
+                        "Clearly explain that approval is required. "
+                        "Never claim that the change was completed."
+                    )
+                })
+
                 messages.append(
                                 {
                                     "role":"tool",
@@ -142,6 +155,10 @@ def send_to_llm(message, db, tools=TOOLS):
                 tools=tools,
                 tool_choice="auto"
                                     )
+
+                logger.info(
+                    "Natural-language response generated for pending approval."
+                )
 
                 return final_response
 
