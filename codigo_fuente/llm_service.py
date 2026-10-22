@@ -1,5 +1,5 @@
 import os
-from collections import defaultdict
+from codigo_fuente.llm_context import save_conversation_turn, MAX_HISTORY_MESSAGES, get_conversation_history, get_or_create_conversation
 from dotenv import load_dotenv
 from groq import Groq
 import json
@@ -7,6 +7,7 @@ from codigo_fuente.schemas import LeadClassification
 from codigo_fuente.definitions import TOOLS
 from codigo_fuente.tool_registry import execute_tool
 import logging
+from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -72,38 +73,11 @@ def classify_lead(lead):
         logger.exception("Unexpected error occurred while classifying lead", extra={"details": str(e)})
         raise ((f"Unexpected error occurred: {e}"))
 
-MAX_HISTORY_MESSAGES = 10
-
-conversation_histories = defaultdict(list)
-
-def save_conversation_turn(
-        conversation_id,
-        user_message,
-        assistant_response
-):
-    history = conversation_histories[conversation_id]
-
-    history.extend([
-        {
-            "role":"user",
-            "content":user_message
-        },
-        {
-            "role":"assistant",
-            "content":assistant_response
-        }
-    ])
-
-    conversation_histories[conversation_id] = (
-        history[-MAX_HISTORY_MESSAGES:]
-    )
-
-
 def send_to_llm(
         message, 
         db, 
         tools=TOOLS,
-        conversation_id = "default"
+        conversation_id = None
         ):
 
     if client is None:
@@ -118,9 +92,31 @@ def send_to_llm(
         "instead of bullet lists or raw field-by-field output. "
         "Preserve the accuracy of the information returned by tools. "
         "Never invent missing lead information."
+
+        "When a tool returns an error or indicates that"
+        "no results were found, explain the situation to "
+        "the user in a natural, friendly, and concise manner. "
+        "Do not expose exceptions, stack traces, HTTP status codes," 
+        "or internal implementation details. Never fabricate results." 
+        "If no records are found, clearly explain that no data"
+        "matches the requested filters and suggest a useful alternative."
     )
-}
-    history = conversation_histories[conversation_id]
+    }
+
+    conversation = get_or_create_conversation(
+        db=db,
+        conversation_id=conversation_id
+    )
+
+    conversation_id = conversation.id
+
+    history = get_conversation_history(
+        db=db,
+        conversation_id=conversation_id,
+        limit=MAX_HISTORY_MESSAGES
+    )
+
+    logger.info("History messages loaded: %s", len(history))
 
     messages = [
         system_message,
@@ -155,7 +151,14 @@ def send_to_llm(
             logger .info(f"Executing tool '{tool_name}' with arguments: {arguments}")
 
             # Execute the tool and get the result
-            result = execute_tool(tool_name, arguments, db)
+            try:
+                result = execute_tool(tool_name, arguments, db)
+            except HTTPException as e:
+                result = {
+                    "error": True,
+                    "status_code": e.status_code,
+                    "detail": e.detail,
+                }
 
             if result.get("status") == "approval required":
                 logger.info(
@@ -202,12 +205,13 @@ def send_to_llm(
                 )
 
                 save_conversation_turn(
-                    conversation_id,
-                    message,
-                    assistant_text
+                    db=db,
+                    conversation_id=conversation_id,
+                    assistant_message = assistant_text,
+                    user_message=message,
                 )
 
-                return final_response
+                return final_response, str(conversation.id)
 
             logger.info("Tool '%s' executed successfully.", tool_name)
 
@@ -237,17 +241,27 @@ def send_to_llm(
                             )
             
             save_conversation_turn(
-                                conversation_id,
-                                message,
-                                assistant_text
+                                db=db,
+                                conversation_id=conversation_id,
+                                user_message=message,
+                                assistant_message=assistant_text
                             )
 
-            return final_response
+            return final_response, str(conversation.id)
 
         logger.info("No function calls received from llm, returning the initial response")
 
-        return response
-    
+        assistant_text = response.choices[0].message.content or ""
+
+        save_conversation_turn(
+            db=db,
+            conversation_id=conversation_id,
+            user_message=message,
+            assistant_message=assistant_text
+        )
+
+        return response, str(conversation.id)
+
     except Exception as e:
         logger.exception("Unexpected error occurred while sending message to llm", extra={"details": str(e)})
         raise RuntimeError(f"Unexpected error occurred: {e}")

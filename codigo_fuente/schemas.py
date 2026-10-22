@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field, EmailStr
 from typing import Literal
 from enum import Enum
+from uuid import UUID
+from pydantic import BaseModel
 
 class Valid_Lead(BaseModel):
     name: str = Field(..., description="Nombre del lead")
@@ -19,6 +21,7 @@ class New_temperature(BaseModel):
 
 class Valid_message(BaseModel):
     message: str = Field(..., description="Message to be sent to the assistant")
+    conversation_id: UUID | None = None
 
 class LeadStatsArgs(BaseModel):
     status: Literal["cold", "hot"]

@@ -16,8 +16,6 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-Base.metadata.create_all(bind=engine)
-
 app = FastAPI()
 
 @app.post("/leads", status_code=201)
@@ -169,7 +167,9 @@ def update_lead(id: int, lead: Valid_Lead, db: Session = Depends(get_db), api_ke
 def ask_assistant(question: Valid_message, api_key: str = Depends(verify_api_key), db: Session = Depends(get_db)):
     """This endpoint allows users to ask questions to the assistant."""
     content = None
-    response = send_to_llm(question.message, db)
+    response, conversation_id = send_to_llm(message=question.message, 
+                                            db=db, 
+                                            conversation_id=question.conversation_id)
 
     # Case 1: A tool requires human approval
     if isinstance(response, dict) and response.get("status") == "approval required":
@@ -179,7 +179,10 @@ def ask_assistant(question: Valid_message, api_key: str = Depends(verify_api_key
             response["tool"],
         )
 
-        return response
+        return {
+            "Conversation_id":conversation_id,
+            "response":response,
+            }
 
     
     # Case 2: The LLM returned a normal response.
@@ -201,6 +204,7 @@ def ask_assistant(question: Valid_message, api_key: str = Depends(verify_api_key
 
     return {
         "status": "completed",
+        "conversation_id": conversation_id,
         "response": content,
         "message": "Assistant question processed successfully",
     }
