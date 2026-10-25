@@ -143,7 +143,7 @@ def classify_lead(lead):
     
     except Exception as e:
         logger.exception("Unexpected error occurred while classifying lead", extra={"details": str(e)})
-        raise ((f"Unexpected error occurred: {e}"))
+
 
 def send_to_llm(
         message, 
@@ -237,6 +237,19 @@ def send_to_llm(
                     "error": True,
                     "status_code": e.status_code,
                     "detail": e.detail,
+                }
+            except ValueError as e:
+                result = {
+                    "error": True,
+                    "status_code": 400,
+                    "detail": str(e),
+                }
+            except Exception as e:
+                logger.exception("Unexpected error occurred while executing tool")
+                result = {
+                    "error": True,
+                    "status_code": 500,
+                    "detail":"Internal error while executing tool",
                 }
 
             if result.get("status") == "approval required":
