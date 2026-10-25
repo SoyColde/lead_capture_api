@@ -50,6 +50,29 @@ Client (Postman / cURL)
 * **Python Logging**
 
 ---
+### LLM Cost Estimation
+
+The API estimates LLM inference costs for lead classification (`POST /leads`) and assistant interactions (`POST /assistant/ask`) using token usage reported by the model.
+
+**Cost calculation**
+
+The estimated cost is calculated using the model's input and output token usage:
+
+- Input tokens: charge_input per million tokens.
+- Cached input tokens: charged_cached per million tokens, when reported by the provider.
+- Output tokens: charge_output per million tokens.
+
+The calculation is performed for each model response. For assistant interactions involving multiple model calls, the individual costs are accumulated to obtain the estimated total cost of the interaction.
+
+**Logging**
+
+The application logs input, output, and total token counts, the operation performed, the model used, and the estimated cost in USD. For assistant interactions, it also logs the accumulated estimated cost associated with the conversation ID.
+
+**Limitations**
+
+These values are estimates based on the configured model pricing and reported token usage. They do not represent a complete operational cost calculation and exclude infrastructure, database, and other service expenses. Model pricing may change over time.
+
+---
 
 ## API Endpoints
 

@@ -20,24 +20,63 @@ except Exception as e:
     client = None #Autoset client as none since there was a problem with the API key
     model = None
 
+def logg_estimated_cost(conversation_id, total_llm_cost):
+    """Registers total cost of a call"""
+    logger.info(
+        "LLM request total | conversation_id = %s | estimated_cost_usd=%.8f",
+        conversation_id,
+        total_llm_cost
+    )
+
 def log_token_usage(response, operation):
     usage = response.usage
+
+    costo_por_entrada = 0.15 #USD
+
+    costo_entrada_cacheada = 0.075
+
+    charge_per_total_output = 0.60
+
+    cantidad_tokens_por_cobro = 1_000_000
 
     if usage is None:
         logger.warning(
             "Token usage unavailable for operation %s",
             operation
         )
-        return
+        return None
+
+    input_tokens = usage.prompt_tokens
+    output_tokens = usage.completion_tokens
+
+    cached_tokens = getattr(
+        getattr(usage, "prompt_tokens_details", None),
+        "cached_tokens",
+        0
+    ) or 0
+
+    regular_input_tokens = input_tokens - cached_tokens
+
+    input_cost = (
+        regular_input_tokens * costo_por_entrada
+        + cached_tokens * costo_entrada_cacheada 
+    ) / cantidad_tokens_por_cobro
+
+    output_cost = output_tokens * charge_per_total_output / cantidad_tokens_por_cobro
+
+    estimated_cost = input_cost + output_cost
 
     logger.info(
-        "LLM token usage | operations= %s | Model = %s | input_tokens = %s | output_tokens = %s | total_tokens = %s",
+        "LLM token usage | operations= %s | Model = %s | input_tokens = %s | output_tokens = %s | total_tokens = %s | estimated cost_usd = %.8f",
         operation,
         response.model,
-        usage.prompt_tokens,
-        usage.completion_tokens,
-        usage.total_tokens
+        input_tokens,
+        output_tokens,
+        usage.total_tokens,
+        estimated_cost,
     )
+
+    return estimated_cost
 
 def classify_lead(lead):
     # It checks if the client is None, which indicates that the LLM client was not initialized properly. 
@@ -72,6 +111,8 @@ def classify_lead(lead):
 
     """
 
+    total_llm_cost = 0.0
+
     try:
         response = client.chat.completions.create(
             model=model,
@@ -84,9 +125,19 @@ def classify_lead(lead):
             response_format={"type":"json_object"}
         )
 
-        log_token_usage(response, "classifying lead")
+        call_cost = log_token_usage(response, "classify call")
+        
+        if call_cost is not None:
+            total_llm_cost += call_cost
 
         result = json.loads(response.choices[0].message.content)
+
+        logger.info("New lead classified successfully")
+
+        logger.info(
+            "LLM request total | estimated_cost_usd = %.8f",
+            total_llm_cost
+        )
 
         return LeadClassification.model_validate(result)
     
@@ -148,6 +199,8 @@ def send_to_llm(
         }
     ]
 
+    total_llm_cost = 0.0
+
     try:
         # first call to llm
         response = client.chat.completions.create(
@@ -157,7 +210,11 @@ def send_to_llm(
             tool_choice="auto"
         )
         logger.info(f"Message sent to llm successfully: {message}")
-        log_token_usage(response, "First call")
+
+        call_cost = log_token_usage(response, "First call")
+
+        if call_cost is not None:
+            total_llm_cost += call_cost
 
         assistant_message = response.choices[0].message
 
@@ -218,7 +275,10 @@ def send_to_llm(
                 tool_choice="auto"
                                     )
 
-                log_token_usage(final_response, "Pending_approval")
+                call_cost = log_token_usage(final_response, "approval_required")
+                
+                if call_cost is not None:
+                    total_llm_cost += call_cost
 
                 logger.info(
                     "Natural-language response generated for pending approval."
@@ -234,6 +294,8 @@ def send_to_llm(
                     assistant_message = assistant_text,
                     user_message=message,
                 )
+
+                logg_estimated_cost(conversation_id, total_llm_cost)
 
                 return final_response, str(conversation.id)
 
@@ -259,7 +321,11 @@ def send_to_llm(
             )
 
             logger.info("Final response generated succesfully") 
-            log_token_usage(final_response, "tool_executed")
+            
+            call_cost = log_token_usage(final_response, "tool_executed")
+            
+            if call_cost is not None:
+                total_llm_cost += call_cost
 
             assistant_text = (
                                 final_response.choices[0].message.content or ""
@@ -271,6 +337,8 @@ def send_to_llm(
                                 user_message=message,
                                 assistant_message=assistant_text
                             )
+
+            logg_estimated_cost(conversation_id, total_llm_cost)
 
             return final_response, str(conversation.id)
 
@@ -284,6 +352,8 @@ def send_to_llm(
             user_message=message,
             assistant_message=assistant_text
         )
+
+        logg_estimated_cost(conversation_id, total_llm_cost)
 
         return response, str(conversation.id)
 
