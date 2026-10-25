@@ -81,7 +81,7 @@ def log_token_usage(response, operation):
 def classify_lead(lead):
     # It checks if the client is None, which indicates that the LLM client was not initialized properly. 
     # If the client is None, it raises a RuntimeError with a message indicating that the LLM client is not initialized 
-    # Suggests checking the GEMINI_API_KEY.
+    # Suggests checking API_KEY.
     if client is None or model is None:
         raise RuntimeError("LLM client not initialized or MODEL not set - check your GROQ_API_KEY and MODEL")
 
@@ -143,6 +143,7 @@ def classify_lead(lead):
     
     except Exception as e:
         logger.exception("Unexpected error occurred while classifying lead", extra={"details": str(e)})
+        raise
 
 
 def send_to_llm(
@@ -298,7 +299,7 @@ def send_to_llm(
             )
         else:
             # Over the tool_call limit
-            if response.choice[0].message.tool_calls:
+            if response.choices[0].message.tool_calls:
                 raise RuntimeError(
                     "Maximum tool iterations reached"
                 )

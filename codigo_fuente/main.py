@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 import math
 import logging
 import codigo_fuente.logging_config
-from google.genai.errors import ServerError
 from typing import Literal
 
 logger = logging.getLogger(__name__)
@@ -57,13 +56,7 @@ def create_lead(lead: Valid_Lead, db: Session = Depends(get_db), api_key: str = 
         logger.error("LLM client unavailable", extra={"details": str(e)})
         new_lead.temperature = "pending"
         db.commit()
-
-    except ServerError as e:
-    #It catches the ServerError exception raised by the clasify_lead function when there is a server error while using the LLM. 
-        logger.error("Server error from LLM", extra={"details": str(e)})
-        new_lead.temperature = "pending"
-        db.commit()
-
+        
     except Exception as e:
     #It catches any other unexpected exceptions raised by the clasify_lead function.
         logger.exception("Unexpected classification error", extra={"details": str(e)})
