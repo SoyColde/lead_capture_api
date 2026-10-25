@@ -20,6 +20,25 @@ except Exception as e:
     client = None #Autoset client as none since there was a problem with the API key
     model = None
 
+def log_token_usage(response, operation):
+    usage = response.usage
+
+    if usage is None:
+        logger.warning(
+            "Token usage unavailable for operation %s",
+            operation
+        )
+        return
+
+    logger.info(
+        "LLM token usage | operations= %s | Model = %s | input_tokens = %s | output_tokens = %s | total_tokens = %s",
+        operation,
+        response.model,
+        usage.prompt_tokens,
+        usage.completion_tokens,
+        usage.total_tokens
+    )
+
 def classify_lead(lead):
     # It checks if the client is None, which indicates that the LLM client was not initialized properly. 
     # If the client is None, it raises a RuntimeError with a message indicating that the LLM client is not initialized 
@@ -64,6 +83,8 @@ def classify_lead(lead):
             ],
             response_format={"type":"json_object"}
         )
+
+        log_token_usage(response, "classifying lead")
 
         result = json.loads(response.choices[0].message.content)
 
@@ -136,6 +157,7 @@ def send_to_llm(
             tool_choice="auto"
         )
         logger.info(f"Message sent to llm successfully: {message}")
+        log_token_usage(response, "First call")
 
         assistant_message = response.choices[0].message
 
@@ -196,6 +218,8 @@ def send_to_llm(
                 tool_choice="auto"
                                     )
 
+                log_token_usage(final_response, "Pending_approval")
+
                 logger.info(
                     "Natural-language response generated for pending approval."
                 )
@@ -234,7 +258,8 @@ def send_to_llm(
                 tool_choice="auto"
             )
 
-            logger.info("Final response generated succesfully")
+            logger.info("Final response generated succesfully") 
+            log_token_usage(final_response, "tool_executed")
 
             assistant_text = (
                                 final_response.choices[0].message.content or ""

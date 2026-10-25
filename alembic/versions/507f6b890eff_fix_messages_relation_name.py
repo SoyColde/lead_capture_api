@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '507f6b890eff'
-down_revision: Union[str, Sequence[str], None] = '445a14f39e2c'
+down_revision: Union[str, Sequence[str], None] = '86db0df3185a'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -30,8 +30,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['conversation_id'], ['conversations.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
-    op.drop_index(op.f('ix_conversation_messages_history'), table_name='conversation_messagess')
-    op.drop_table('conversation_messagess')
+  
     # ### end Alembic commands ###
 
 
