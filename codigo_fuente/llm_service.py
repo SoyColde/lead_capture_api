@@ -172,6 +172,10 @@ def send_to_llm(
         "or internal implementation details. Never fabricate results." 
         "If no records are found, clearly explain that no data"
         "matches the requested filters and suggest a useful alternative."
+
+        "When a tool returns 'approval required', clearly explain "
+        "that the action is pending human approval and has not "
+        "been executed. Never claim that the change was completed."
     )
     }
 
@@ -199,6 +203,8 @@ def send_to_llm(
         }
     ]
 
+    MAX_TOOL_ITERATIONS = 5
+
     total_llm_cost = 0.0
 
     try:
@@ -216,62 +222,55 @@ def send_to_llm(
         if call_cost is not None:
             total_llm_cost += call_cost
 
-        assistant_message = response.choices[0].message
+        for iteration in range(MAX_TOOL_ITERATIONS):
 
-        # Verify if llm requested the function call
-        if assistant_message.tool_calls:
+            assistant_message = response.choices[0].message
+            tool_calls = assistant_message.tool_calls or []
+
+            # If there are not tools, we have the final response
+            if not tool_calls:
+                break
+
             logger.info(f"Function calls received from llm: {assistant_message.tool_calls}")
 
-            tool_call = assistant_message.tool_calls[0]
+            # Save message with all the tool calls
+            messages.append(assistant_message)
 
-            tool_name = tool_call.function.name
-            arguments = json.loads(tool_call.function.arguments)
+            for tool_call in tool_calls:
 
-            logger .info(f"Executing tool '{tool_name}' with arguments: {arguments}")
+                tool_name = tool_call.function.name
 
             # Execute the tool and get the result
-            try:
-                result = execute_tool(tool_name, arguments, db)
-            except HTTPException as e:
-                result = {
-                    "error": True,
-                    "status_code": e.status_code,
-                    "detail": e.detail,
-                }
-            except ValueError as e:
-                result = {
-                    "error": True,
-                    "status_code": 400,
-                    "detail": str(e),
-                }
-            except Exception as e:
-                logger.exception("Unexpected error occurred while executing tool")
-                result = {
-                    "error": True,
-                    "status_code": 500,
-                    "detail":"Internal error while executing tool",
-                }
+                try:
+                    arguments = json.loads(tool_call.function.arguments)
+                    logger .info(f"Executing tool '{tool_name}' with arguments: {arguments}")
+                    result = execute_tool(tool_name, arguments, db)
+                except HTTPException as e:
+                    result = {
+                        "error": True,
+                        "status_code": e.status_code,
+                        "detail": e.detail,
+                    }
+                except ValueError as e:
+                    result = {
+                        "error": True,
+                        "status_code": 400,
+                        "detail": str(e),
+                    }
+                except Exception as e:
+                    logger.exception("Unexpected error occurred while executing tool")
+                    result = {
+                        "error": True,
+                        "status_code": 500,
+                        "detail":"Internal error while executing tool",
+                    }
 
-            if result.get("status") == "approval required":
-                logger.info(
-                    "Tool '%s' requires human approval; execution blocked.",
-                    tool_name
-                )
+                if result.get("status") == "approval required":
 
-                messages.append(assistant_message)
-
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "IMPORTANT: The requested action has NOT been "
-                        "executed. It requires human approval. "
-                        "The pending action has been registered, but "
-                        "the lead has not been modified. "
-                        "Respond naturally in the user's language. "
-                        "Clearly explain that approval is required. "
-                        "Never claim that the change was completed."
+                    logger.info(
+                        "Tool '%s' requires human approval; execution blocked.",
+                        tool_name
                     )
-                })
 
                 messages.append(
                                 {
@@ -281,93 +280,46 @@ def send_to_llm(
                                 }
                             )
 
-                final_response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=tools,
-                tool_choice="auto"
-                                    )
+            response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            )                 
 
-                call_cost = log_token_usage(final_response, "approval_required")
-                
-                if call_cost is not None:
-                    total_llm_cost += call_cost
-
-                logger.info(
-                    "Natural-language response generated for pending approval."
-                )
-
-                assistant_text = (
-                    final_response.choices[0].message.content or ""
-                )
-
-                save_conversation_turn(
-                    db=db,
-                    conversation_id=conversation_id,
-                    assistant_message = assistant_text,
-                    user_message=message,
-                )
-
-                logg_estimated_cost(conversation_id, total_llm_cost)
-
-                return final_response, str(conversation.id)
-
-            logger.info("Tool '%s' executed successfully.", tool_name)
-
-            # Created the new content with the result
-            messages.append(assistant_message)
-
-            messages.append(
-                {
-                    "role":"tool",
-                    "tool_call_id":tool_call.id,
-                    "content":json.dumps(result, default=str)
-                }
-            )
-
-            # Send the result back to llm
-            final_response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=tools,
-                tool_choice="auto"
-            )
-
-            logger.info("Final response generated succesfully") 
-            
-            call_cost = log_token_usage(final_response, "tool_executed")
-            
+            call_cost = log_token_usage(response, f"Tool iteration {iteration + 1}")
+                    
             if call_cost is not None:
                 total_llm_cost += call_cost
 
-            assistant_text = (
-                                final_response.choices[0].message.content or ""
-                            )
-            
-            save_conversation_turn(
-                                db=db,
-                                conversation_id=conversation_id,
-                                user_message=message,
-                                assistant_message=assistant_text
-                            )
+            logger.info(
+                "LLM response received for iteration %s",
+                iteration + 1,
+            )
+        else:
+            # Over the tool_call limit
+            if response.choice[0].message.tool_calls:
+                raise RuntimeError(
+                    "Maximum tool iterations reached"
+                )
 
-            logg_estimated_cost(conversation_id, total_llm_cost)
+        # Get a final response
 
-            return final_response, str(conversation.id)
+        assistant_text = (
+                response.choices[0].message.content or ""
+        )
 
-        logger.info("No function calls received from llm, returning the initial response")
-
-        assistant_text = response.choices[0].message.content or ""
+        # Save the turn just once
 
         save_conversation_turn(
             db=db,
             conversation_id=conversation_id,
+            assistant_message = assistant_text,
             user_message=message,
-            assistant_message=assistant_text
-        )
+        )   
 
         logg_estimated_cost(conversation_id, total_llm_cost)
-
+        
         return response, str(conversation.id)
 
     except Exception as e:
