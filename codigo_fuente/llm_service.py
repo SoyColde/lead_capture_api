@@ -154,7 +154,7 @@ def send_to_llm(
         ):
 
     if client is None:
-        raise RuntimeError("LLM client not initialized - check your GEMINI_API_KEY")
+        raise RuntimeError("LLM client not initialized")
 
     system_message = {
     "role": "system",
