@@ -224,7 +224,7 @@ def get_pending_actions(
     else:
         total_pages = 0
         logger.warning("No actions found in the database")
-        raise HTTPException(status_code=404, detail={"requests": "0", "details": "The database is empty"})
+        raise HTTPException(status_code=404, detail={"requests": "0", "details": "No actions found for the requested status"})
 
     actions = (query
                .order_by(PendingAction.id.asc())
