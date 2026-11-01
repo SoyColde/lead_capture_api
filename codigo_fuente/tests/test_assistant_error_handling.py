@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+import pytest
 
 from codigo_fuente.main import app, verify_api_key, get_db
 from codigo_fuente import llm_service
@@ -134,3 +135,63 @@ def test_assistant_ask_handles_value_error_without_500():
     finally:
         app.dependency_overrides.clear()
         app.dependency_overrides.update(previous_override)
+
+def test_to_llm_stops_after_max_tool_iterations():
+
+    tool_responses = [
+        create_tool_response()
+        for _ in range(6)
+    ]
+
+    db = SimpleNamespace()
+
+    with (
+        patch.object(
+            llm_service.client.chat.completions,
+            "create",
+            side_effect=tool_responses,
+        ) as mock_llm,
+
+        patch.object(
+            llm_service,
+            "execute_tool",
+            return_value = {"status":"success"},
+        ) as mock_execute_tool,
+
+        patch.object(
+            llm_service,
+            "get_or_create_conversation",
+            return_value=SimpleNamespace(
+                id = "test-conversation-id"
+            ),
+        ),
+
+        patch.object(
+            llm_service,
+            "get_conversation_history",
+            return_value = []
+        ),
+
+        patch.object(llm_service, "save_conversation_turn"),
+
+        patch.object(llm_service, "logg_estimated_cost"),
+
+        patch.object(
+            llm_service,
+            "log_token_usage",
+            return_value = None
+        ),
+    ):
+
+        with pytest.raises(
+            RuntimeError,
+            match="Maximum tool iterations reached",
+        ):
+
+            send_to_llm(
+                message= "Test maximum iterations",
+                db = db
+            )
+
+    assert mock_llm.call_count == 6
+    assert mock_execute_tool.call_count == 5
